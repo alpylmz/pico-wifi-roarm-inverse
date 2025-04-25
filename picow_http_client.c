@@ -20,6 +20,9 @@
 #define URL_BUFFER_SIZE 512
 #define JSON_COMMAND_BUFFER_SIZE 256
 #define URL_BASE_PATH "/js?json="
+#define JOINT_TARGET_EPSILON 0.01
+#define JOINT_POLL_TIMEOUT_MS 3000
+#define JOINT_POLLING_INTERVAL_MS 30
 
 // Global or appropriately scoped response buffer
 char response_buffer[RESPONSE_BUFFER_SIZE];
@@ -249,6 +252,120 @@ TargetPose target_poses[] = {
     // Add more poses here...
 };
 
+/**
+ * @brief Sends a command with target joint angles and waits for the robot to report being close.
+ *
+ * Sends the command repeatedly and polls the robot's status via HTTP GET response.
+ * Compares the reported joint angles (b, s, e, t, r from parsed_data)
+ * to the target joint angles provided in target_q.
+ * Continues polling until all reported angles are within JOINT_TARGET_EPSILON
+ * of their respective targets, or until a timeout occurs.
+ *
+ * !!! --- ASSUMPTIONS --- !!!
+ * - Relies on global 'parsed_data' being updated by sendCommandAndParseResponse.
+ * - Relies on sendCommandAndParseResponse returning 0 on success (incl. parsing).
+ * - Assumes NU = 5 and the order in target_q matches base, shoulder, elbow, wrist, roll.
+ * - Assumes parsed_data fields b, s, e, t, r correspond to these joints IN THAT ORDER.
+ * - Assumes the 'hand' value in the command can be a fixed default.
+ *
+ * @param target_q Array of NU target joint angles (radians).
+ * @return 0 on success (target reached within epsilon).
+ * -1 on communication or parsing error during polling.
+ * -2 on timeout.
+ * -3 on command formatting error.
+ */
+int waitForJointTargetReached(const double target_q[NU]) {
+    // Local buffer for the command to avoid interfering with other potential uses
+    // of a global buffer outside this function's polling loop.
+    char command_buffer[JSON_COMMAND_BUFFER_SIZE];
+    int command_len;
+    int status;
+
+    // 1. Format the target joint angles into the JSON command string
+    //    Uses the provided target_q for joint values.
+    //    Uses fixed values for Hand, Speed, Acceleration based on previous examples.
+    command_len = snprintf(command_buffer, JSON_COMMAND_BUFFER_SIZE,
+                           "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
+                           target_q[0], target_q[1], target_q[2], target_q[3], target_q[4],
+                           3.13, // Default hand value from previous code - adjust if needed
+                           0,    // Default speed
+                           10);  // Default acceleration
+
+    if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
+        printf("ERROR [waitForJointTargetReached]: Failed to format joint command.\n");
+        return -3; // Formatting error
+    }
+
+    printf("INFO [waitForJointTargetReached]: Waiting for joints: Target=[%.3f, %.3f, %.3f, %.3f, %.3f] (Eps=%.3f rad)\n",
+           target_q[0], target_q[1], target_q[2], target_q[3], target_q[4], JOINT_TARGET_EPSILON);
+
+    // 2. Start Polling Loop with Timeout
+    absolute_time_t timeout_time = make_timeout_time_ms(JOINT_POLL_TIMEOUT_MS);
+    int poll_count = 0;
+    bool first_poll = true; // Flag to ensure we check status at least once
+
+    while (first_poll || !time_reached(timeout_time)) {
+        first_poll = false; // Ensure loop terminates if timeout is 0 and condition met first time
+        poll_count++;
+
+        // 3. Send the command to request status / continue motion toward target_q
+        // printf("DEBUG [waitForJointTargetReached]: Polling attempt %d\n", poll_count);
+        status = sendCommandAndParseResponse(command_buffer);
+
+        if (status != 0) {
+            // If the command send or response parsing fails during polling
+            printf("ERROR [waitForJointTargetReached]: Communication/Parsing failed (status %d) during poll %d. Aborting wait.\n", status, poll_count);
+            return -1; // Communication or parsing error
+        }
+
+        // 4. Check if all joints reported in parsed_data are within epsilon
+        bool all_reached = true;
+        double reported_q[NU]; // Array to hold reported values for checking
+
+        // --- Map parsed_data fields to reported_q array ---
+        // !!! CRITICAL: Ensure this order matches your robot's response and target_q order !!!
+        reported_q[0] = (double)parsed_data.b; // Base
+        reported_q[1] = (double)parsed_data.s; // Shoulder
+        reported_q[2] = (double)parsed_data.e; // Elbow
+        reported_q[3] = (double)parsed_data.t; // Wrist ('t')
+        reported_q[4] = (double)parsed_data.r; // Roll ('r')
+        // --- End Mapping ---
+
+        // Optional: Print current reported angles for debugging
+        // printf("DEBUG [waitForJointTargetReached]: Poll %d Reported=[%.3f, %.3f, %.3f, %.3f, %.3f]\n", poll_count,
+        //        reported_q[0], reported_q[1], reported_q[2], reported_q[3], reported_q[4]);
+
+        for (int j = 0; j < NU; ++j) {
+            double diff = fabs(reported_q[j] - target_q[j]);
+            if (diff > JOINT_TARGET_EPSILON) {
+                // printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
+                all_reached = false;
+                break; // No need to check further joints for this poll cycle
+            }
+        }
+
+        // 5. Exit loop if target reached
+        if (all_reached) {
+            printf("INFO [waitForJointTargetReached]: Joint target reached within epsilon after %d polls.\n", poll_count);
+            return 0; // Success
+        }
+
+        // 6. Check for timeout *after* checking condition, before sleeping
+        if (time_reached(timeout_time)) {
+             printf("ERROR [waitForJointTargetReached]: Timeout after %d polls.\n", poll_count);
+             return -2; // Timeout error
+        }
+
+        // 7. Wait before next poll cycle
+        sleep_ms(JOINT_POLLING_INTERVAL_MS);
+
+    } // End while loop
+
+    // This part should only be reached if the timeout happened exactly on the last check
+    printf("ERROR [waitForJointTargetReached]: Timeout likely occurred exactly at loop end.\n");
+    return -2; // Timeout error
+}
+
 // --- Main Function ---
 int main() {
     stdio_init_all();
@@ -341,9 +458,10 @@ int main() {
         }
 
         // Optional delay between sending commands for each pose
-        printf("Waiting 3 seconds before next pose...\n");
-        sleep_ms(3000);
-
+        //printf("Waiting 3 seconds before next pose...\n");
+        //sleep_ms(3000);
+        printf("Waiting for joint target to be reached...\n");
+        waitForJointTargetReached(q_out);
     } // End of pose loop
 
     // --- Cleanup ---
