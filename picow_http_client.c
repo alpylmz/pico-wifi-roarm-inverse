@@ -16,13 +16,245 @@
 #include "hardware/pll.h"
 
 #include "hardware/sync.h"
- 
-char command[] = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614,\"wrist\":-1.14,\"roll\":0.065,\"hand\":0.0004,\"spd\":0,\"acc\":10}";
+
 
 #define HOST "192.168.4.1"
 //#define URL_REQUEST "http://192.168.4.1/js?json={\"T\":102}"
 #define URL_PATH "/js?json={\"T\":102}" 
 
+#define RESPONSE_BUFFER_SIZE 2048
+#define URL_BUFFER_SIZE 512
+#define URL_BASE_PATH "/js?json="
+
+// Global or appropriately scoped response buffer
+char response_buffer[RESPONSE_BUFFER_SIZE];
+int response_buffer_len = 0;
+
+char command[] = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614,\"wrist\":-1.14,\"roll\":0.065,\"hand\":0.0004,\"spd\":0,\"acc\":10}";
+
+
+// Define the structure to hold the parsed data
+typedef struct {
+    int T;
+    float x;
+    float y;
+    float z;
+    float tit;
+    float b;
+    float s;
+    float e;
+    float t; // Note: 't' conflicts with the type name 'time_t' sometimes, rename if issues arise
+    float r;
+    float g;
+    int tB;
+    int tS;
+    int tE;
+    int tT;
+    int tR;
+} ResponseData;
+
+// Global or appropriately scoped variable to store the parsed data
+ResponseData parsed_data;
+
+int parse_json_response_sscanf(const char *buffer, ResponseData *data) {
+    // Ensure data pointer is valid
+    if (!data || !buffer) {
+        return -1;
+    }
+
+    // IMPORTANT: This format string MUST exactly match the JSON structure,
+    // including braces, quotes, colons, and commas.
+    // %d for integers, %f for floats.
+    // It assumes the order of keys is always the same.
+    const char *format = "{\"T\":%d,\"x\":%f,\"y\":%f,\"z\":%f,\"tit\":%f,\"b\":%f,\"s\":%f,\"e\":%f,\"t\":%f,\"r\":%f,\"g\":%f,\"tB\":%d,\"tS\":%d,\"tE\":%d,\"tT\":%d,\"tR\":%d}";
+
+    int items_scanned = sscanf(buffer, format,
+                               &data->T, &data->x, &data->y, &data->z,
+                               &data->tit, &data->b, &data->s, &data->e,
+                               &data->t, &data->r, &data->g,
+                               &data->tB, &data->tS, &data->tE,
+                               &data->tT, &data->tR);
+
+    // Check if the expected number of items were successfully scanned (16 in this case)
+    if (items_scanned == 16) {
+        return 0; // Success
+    } else {
+        printf("sscanf parsing failed. Expected 16 items, got %d\n", items_scanned);
+        // Optional: Print the buffer that failed to parse for debugging
+        // printf("Failed buffer: %s\n", buffer);
+        return -1; // Failure
+    }
+}
+
+err_t my_http_client_receive_store_fn(void *arg, struct altcp_pcb *pcb, struct pbuf *p, err_t err) {
+    u16_t offset = 0;
+    response_buffer_len = 0;
+
+    while(offset < p->tot_len) {
+        char c = (char)pbuf_get_at(p, offset++);
+        if (offset < RESPONSE_BUFFER_SIZE - 1) { // Leave space for null terminator
+            response_buffer[offset - 1] = c;
+            response_buffer_len++;
+        }
+    }
+    response_buffer[offset - 1] = '\0'; // Null terminate the string
+
+    return ERR_OK;
+}
+
+// --- Send Command and Parse Response Function ---
+/**
+ * @brief Sends an HTTP GET request with the command embedded in the URL,
+ * receives the response, parses it, and prints the parsed data.
+ *
+ * @param json_command The JSON command string to send (will be appended to URL_BASE_PATH).
+ * @return 0 on success (request sent and response parsed), non-zero on failure.
+ */
+int sendCommandAndParseResponse(const char* json_command) {
+    if (!json_command) {
+        printf("Error: json_command cannot be NULL.\n");
+        return -1;
+    }
+
+    // Construct the full URL path
+    char url_buffer[URL_BUFFER_SIZE];
+    int required_len = snprintf(url_buffer, URL_BUFFER_SIZE, "%s%s", URL_BASE_PATH, json_command);
+
+    if (required_len < 0 || required_len >= URL_BUFFER_SIZE) {
+        printf("Error: Failed to construct URL or URL buffer too small (need %d, have %d).\n",
+               required_len, URL_BUFFER_SIZE);
+        return -2;
+    }
+
+    printf("Sending command: %s\n", json_command);
+    printf("Constructed URL Path: %s\n", url_buffer);
+
+    // Reset response buffer before request
+    response_buffer[0] = '\0';
+    response_buffer_len = 0;
+
+    // Setup HTTP request structure
+    EXAMPLE_HTTP_REQUEST_T req = {0};
+    req.hostname = HOST;
+    req.url = url_buffer; // Use the dynamically constructed URL path
+    req.headers_fn = http_client_header_print_fn; // Optional: Prints headers
+    req.recv_fn = my_http_client_receive_store_fn; // Use our storing function
+
+    // Get async context (assuming cyw43 is initialized)
+    async_context_t *context = cyw43_arch_async_context();
+    if (!context) {
+        printf("Error: Failed to get async context.\n");
+        return -3;
+    }
+
+    // Perform the synchronous request
+    printf("Performing HTTP GET request to %s%s\n", req.hostname, req.url);
+    int result = http_client_request_sync(context, &req);
+
+    printf("HTTP request finished. Result code: %d\n", result);
+
+    if (result != 0) {
+        printf("HTTP request failed.\n");
+        return result; // Return the HTTP error code
+    }
+
+    // Check if we actually received anything
+    if (response_buffer_len == 0) {
+         printf("Warning: HTTP request successful, but received no data.\n");
+         // Depending on requirements, this might be an error or expected
+         return -4; // Return a custom error code for empty response
+    }
+
+    printf("Raw Response Received (%u bytes):\n---\n%s\n---\n", (unsigned int)response_buffer_len, response_buffer);
+
+    // Try parsing the response (using the global parsed_data struct)
+    if (parse_json_response_sscanf(response_buffer, &parsed_data) == 0) {
+        printf("Parsing successful!\n");
+        // Print the parsed data:
+        printf("  T   = %d\n", parsed_data.T);
+        printf("  x   = %f\n", parsed_data.x);
+        printf("  y   = %f\n", parsed_data.y);
+        printf("  z   = %f\n", parsed_data.z);
+        printf("  tit = %f\n", parsed_data.tit);
+        printf("  b   = %f\n", parsed_data.b);
+        printf("  s   = %f\n", parsed_data.s);
+        printf("  e   = %f\n", parsed_data.e);
+        printf("  t   = %f\n", parsed_data.t);
+        printf("  r   = %f\n", parsed_data.r);
+        printf("  g   = %f\n", parsed_data.g);
+        printf("  tB  = %d\n", parsed_data.tB);
+        printf("  tS  = %d\n", parsed_data.tS);
+        printf("  tE  = %d\n", parsed_data.tE);
+        printf("  tT  = %d\n", parsed_data.tT);
+        printf("  tR  = %d\n", parsed_data.tR);
+        return 0; // Success!
+    } else {
+        printf("Failed to parse the JSON response.\n");
+        return -5; // Return a custom error code for parsing failure
+    }
+}
+
+
+// --- Main Function ---
+int main() {
+    stdio_init_all();
+    printf("Pico HTTP Client - Command Sender\n");
+
+    if (cyw43_arch_init()) {
+        printf("Failed to initialise cyw43\n");
+        return 1;
+    }
+    cyw43_arch_enable_sta_mode();
+
+    printf("Connecting to Wi-Fi '%s'...\n", WIFI_SSID);
+    if (cyw43_arch_wifi_connect_timeout_ms(WIFI_SSID, WIFI_PASSWORD, CYW43_AUTH_WPA2_AES_PSK, 30000)) {
+        printf("Failed to connect.\n");
+        cyw43_arch_deinit();
+        return 1;
+    }
+    printf("Connected.\n");
+
+    // --- Example Usage ---
+    // Define your command string
+    const char *command1 = "{\"T\":102}"; // Simple command from original code
+    const char *command2 = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614,\"wrist\":-1.14,\"roll\":0.065,\"hand\":0.0004,\"spd\":0,\"acc\":10}"; // More complex one
+
+    printf("\n--- Sending Command 1 ---\n");
+    int status1 = sendCommandAndParseResponse(command1);
+    if (status1 == 0) {
+        printf("Command 1 processed successfully.\n");
+        // You can now use the values in the global 'parsed_data' struct if needed
+        // float current_x = parsed_data.x;
+    } else {
+        printf("Command 1 failed with status code: %d\n", status1);
+    }
+
+    sleep_ms(1000); // Small delay between requests (optional)
+
+    printf("\n--- Sending Command 2 ---\n");
+    // Note: The response format is assumed to be the same regardless of the command sent.
+    // If the response structure changes based on the command, the parser needs adjustment.
+    int status2 = sendCommandAndParseResponse(command2);
+     if (status2 == 0) {
+        printf("Command 2 processed successfully.\n");
+        // parsed_data struct is now updated with the results from this command
+    } else {
+        printf("Command 2 failed with status code: %d\n", status2);
+    }
+    // --- End Example Usage ---
+
+
+    cyw43_arch_deinit();
+    printf("\nTest finished.\n");
+    return (status1 == 0 && status2 == 0) ? 0 : 1; // Indicate overall success/failure
+}
+
+
+
+
+
+
+/*
  int main() {
      stdio_init_all();
      printf("Hello world!\n");
@@ -44,24 +276,38 @@ char command[] = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614
      printf(URL_PATH);
      printf("\n");
      req1.headers_fn = http_client_header_print_fn;
-     req1.recv_fn = http_client_receive_print_fn;
+     //req1.recv_fn = http_client_receive_print_fn;
+     req1.recv_fn = my_http_client_receive_store_fn;
      int result = http_client_request_sync(cyw43_arch_async_context(), &req1);
-     result += http_client_request_sync(cyw43_arch_async_context(), &req1); // repeat
- 
-     // test async
-     EXAMPLE_HTTP_REQUEST_T req2 = req1;
-     result += http_client_request_async(cyw43_arch_async_context(), &req1);
-     result += http_client_request_async(cyw43_arch_async_context(), &req2);
-     while(!req1.complete && !req2.complete) {
-         async_context_poll(cyw43_arch_async_context());
-         async_context_wait_for_work_ms(cyw43_arch_async_context(), 1000);
-     }
- 
-     req1.tls_config = altcp_tls_create_config_client(NULL, 0); // https
-     result += http_client_request_sync(cyw43_arch_async_context(), &req1);
-     result += http_client_request_sync(cyw43_arch_async_context(), &req1); // repeat
-     altcp_tls_free_config(req1.tls_config);
- 
+
+     printf("result: ");
+     printf("%s\n", response_buffer);
+
+     if (parse_json_response_sscanf(response_buffer, &parsed_data) == 0) {
+        printf("Parsing successful!\n");
+        // Access the data:
+        printf("T   = %d\n", parsed_data.T);
+        printf("x   = %f\n", parsed_data.x);
+        printf("y   = %f\n", parsed_data.y);
+        printf("z   = %f\n", parsed_data.z);
+        printf("tit = %f\n", parsed_data.tit);
+        printf("b   = %f\n", parsed_data.b);
+        printf("s   = %f\n", parsed_data.s);
+        printf("e   = %f\n", parsed_data.e);
+        printf("t   = %f\n", parsed_data.t);
+        printf("r   = %f\n", parsed_data.r);
+        printf("g   = %f\n", parsed_data.g);
+        printf("tB  = %d\n", parsed_data.tB);
+        printf("tS  = %d\n", parsed_data.tS);
+        printf("tE  = %d\n", parsed_data.tE);
+        printf("tT  = %d\n", parsed_data.tT);
+        printf("tR  = %d\n", parsed_data.tR);
+
+        // Now you can use parsed_data.x, parsed_data.y etc. elsewhere
+    } else {
+        printf("Failed to parse the JSON response.\n");
+    }
+     
      if (result != 0) {
          panic("test failed");
      }
@@ -70,3 +316,4 @@ char command[] = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614
      sleep_ms(100);
      return 0;
  }
+*/
