@@ -17,6 +17,8 @@
 
 #include "hardware/sync.h"
 
+#include "inverse_kinematics/inverse_kinematics.hpp"
+
 
 #define HOST "192.168.4.1"
 //#define URL_REQUEST "http://192.168.4.1/js?json={\"T\":102}"
@@ -31,7 +33,6 @@ char response_buffer[RESPONSE_BUFFER_SIZE];
 int response_buffer_len = 0;
 
 char command[] = "{\"T\":102,\"base\":-0.106,\"shoulder\":-1.23,\"elbow\":-0.614,\"wrist\":-1.14,\"roll\":0.065,\"hand\":0.0004,\"spd\":0,\"acc\":10}";
-
 
 // Define the structure to hold the parsed data
 typedef struct {
@@ -198,6 +199,60 @@ int sendCommandAndParseResponse(const char* json_command) {
 // --- Main Function ---
 int main() {
     stdio_init_all();
+
+    sleep_ms(10000);
+    // first, test inverse kinematics:
+
+    double goal_position[3] = {-0.253370, 0.307280, 0.384357};
+    double goal_rotation[3][3] = {
+        {-0.807539, -0.043014, -0.588243},
+        {-0.587219, 0.152085, 0.795012},
+        {0.055267, 0.987431, -0.148073}
+    };
+
+    // q_start could be a random position or the current position of the robot.
+    double q_start[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
+    //double q_start[NU] = {2.07809, -0.645178, 1.72935, 1.82307, 2.51461};
+    double q_out[NU] = {0};
+
+    inverse_kinematics_roarm(
+        goal_position,
+        goal_rotation,
+        q_start,
+        q_out
+    );
+
+    printf("Output joint angles: ");
+    for (int i = 0; i < 5; i++) {
+        printf("%f ", q_out[i]);
+    }
+    printf("\n");
+
+    double goal_position_sec[3] = {-0.063227, 0.093742, 0.384357};
+    double goal_rotation_sec[3][3] = {
+        {-0.832132, -0.552419, 0.048882},
+        {-0.041797, 0.150363, 0.987747},
+        {-0.553000, 0.819893, -0.148211}
+    };
+    
+    double q_start_sec[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
+    double q_out_sec[NU] = {0};
+
+    inverse_kinematics_roarm(
+        goal_position_sec,
+        goal_rotation_sec,
+        q_start_sec,
+        q_out_sec
+    );
+
+    printf("Output joint angles: ");
+    for (int i = 0; i < 5; i++) {
+        printf("%f ", q_out_sec[i]);
+    }
+    printf("\n");
+
+
+
     printf("Pico HTTP Client - Command Sender\n");
 
     if (cyw43_arch_init()) {
@@ -229,7 +284,7 @@ int main() {
         printf("Command 1 failed with status code: %d\n", status1);
     }
 
-    sleep_ms(1000); // Small delay between requests (optional)
+    sleep_ms(3000); // Small delay between requests (optional)
 
     printf("\n--- Sending Command 2 ---\n");
     // Note: The response format is assumed to be the same regardless of the command sent.
