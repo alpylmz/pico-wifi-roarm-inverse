@@ -9,7 +9,7 @@
  #include "pico/cyw43_arch.h"
  #include "pico/async_context.h"
  #include "lwip/altcp_tls.h"
- #include "example_http_client_util.h"
+ #include "example_http_client_util.hpp"
  
  // Using this url as we know the root cert won't change for a long time
  #define HOST "fw-download-alias1.raspberrypi.com"

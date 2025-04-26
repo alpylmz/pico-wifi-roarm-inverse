@@ -53,7 +53,7 @@ pico_sdk_init()
 
 pico_add_library(example_lwip_http_util NOFLAG)
 target_sources(example_lwip_http_util INTERFACE
-        ${CMAKE_CURRENT_LIST_DIR}/example_http_client_util.c
+        ${CMAKE_CURRENT_LIST_DIR}/example_http_client_util.cpp
         )
 pico_mirrored_target_link_libraries(example_lwip_http_util INTERFACE
         pico_lwip_http
@@ -65,7 +65,7 @@ target_include_directories(example_lwip_http_util INTERFACE
         )
 
 add_executable(picow_http_client
-        picow_http_client.c
+        picow_http_client.cpp
         )
 target_compile_definitions(picow_http_client PRIVATE
         WIFI_SSID=\"${WIFI_SSID}\"
@@ -83,7 +83,7 @@ target_link_libraries(picow_http_client
 pico_add_extra_outputs(picow_http_client)
 
 add_executable(picow_http_client_verify
-        picow_http_verify.c
+        picow_http_verify.cpp
         )
 target_compile_definitions(picow_http_client_verify PRIVATE
         WIFI_SSID=\"${WIFI_SSID}\"

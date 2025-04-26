@@ -9,7 +9,7 @@
 #include "pico/async_context.h"
 #include "lwip/altcp.h"
 #include "lwip/altcp_tls.h"
-#include "example_http_client_util.h"
+#include "example_http_client_util.hpp"
 
 #ifndef HTTP_INFO
 #define HTTP_INFO printf
@@ -96,7 +96,7 @@ static struct altcp_pcb *altcp_tls_alloc_sni(void *arg, u8_t ip_type) {
         HTTP_ERROR("Failed to allocate PCB\n");
         return NULL;
     }
-    mbedtls_ssl_set_hostname(altcp_tls_context(pcb), req->hostname);
+    mbedtls_ssl_set_hostname((mbedtls_ssl_context*)altcp_tls_context(pcb), req->hostname);
     return pcb;
 }
 

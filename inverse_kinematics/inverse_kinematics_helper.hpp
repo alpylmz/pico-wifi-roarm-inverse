@@ -1,7 +1,7 @@
 #ifndef INVERSE_KINEMATICS_HELPER_H
 #define INVERSE_KINEMATICS_HELPER_H
 
-#include "inverse_kinematics_config.h"
+#include "inverse_kinematics_config.hpp"
 #include <string.h>
 #include <math.h>
 

@@ -3,18 +3,18 @@
 #include <math.h>
 #include <stdbool.h>
 
-#include "inverse_kinematics_config.h"
+#include "inverse_kinematics_config.hpp"
 
 #ifdef DOUBLE_VERSION
     //#include "forward_kinematics_indy7_double.h"
     //#include "forward_kinematics_ur5_double.h"
-    #include "forward_kinematics_roarm_double.h"
+    #include "forward_kinematics_roarm_double.hpp"
     #endif
 #ifdef FIXED32_VERSION
     #include "forward_kinematics_indy7_fixed32.h"
 #endif
 
-#include "inverse_kinematics_helper.h"
+#include "inverse_kinematics_helper.hpp"
 
 
 void inverse_kinematics_roarm(

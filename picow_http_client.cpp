@@ -4,7 +4,7 @@
 #include "pico/cyw43_arch.h"
 #include "pico/async_context.h"
 #include "lwip/altcp_tls.h"
-#include "example_http_client_util.h"
+#include "example_http_client_util.hpp"
 
 #include "pico/stdlib.h"
 #include "hardware/clocks.h"
@@ -13,6 +13,9 @@
 #include "hardware/sync.h"
 
 #include "inverse_kinematics/inverse_kinematics.hpp" // Make sure NU is defined here (e.g., #define NU 5)
+
+#include <vector>
+
 
 // --- Constants and Globals (Keep existing ones like HOST, buffers, etc.) ---
 #define HOST "192.168.4.1"
@@ -376,22 +379,9 @@ int main() {
     int num_poses = sizeof(target_poses) / sizeof(target_poses[0]);
     printf("Defined %d target poses.\n", num_poses);
 
-    // --- IK and Command Variables ---
-    // Initial guess for the very first IK calculation (e.g., home position)
-    // Ensure NU is defined correctly (likely 5 for base, shoulder, elbow, wrist, roll)
-    double initial_q_start[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
-    double guess_q[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
-    // double initial_q_start[NU] = {0.0, -M_PI_2, M_PI_2, -M_PI_2, 0.0}; // Example alternative start
-
-    double current_q[NU] = {0}; // Holds the current/last known joint angles
-    double q_out[NU] = {0};     // Holds the result of the latest IK calculation
-    char ik_command_buffer[JSON_COMMAND_BUFFER_SIZE]; // Buffer for the command string
     int command_len;
     int status = 0;
     bool overall_success = true;
-
-    // Initialize current_q with the starting configuration
-    memcpy(current_q, initial_q_start, sizeof(initial_q_start));
 
     // --- WiFi Connection ---
     if (cyw43_arch_init()) {
@@ -411,29 +401,25 @@ int main() {
     for (int i = 0; i < num_poses; ++i) {
         printf("\n--- Processing Pose %d of %d ---\n", i + 1, num_poses);
 
-        // Calculate Inverse Kinematics for the current target pose
-        // Use 'current_q' (result from previous step or initial start) as the starting guess
-        inverse_kinematics_roarm(
-            target_poses[i].position,
-            target_poses[i].rotation,
-            guess_q,
-            q_out      // Store the result here
-        );
+        // json_command_buffer
+        char json_command_buffer[JSON_COMMAND_BUFFER_SIZE]; // Buffer for the command string
 
-        printf("IK Output (q_out): ");
+        // SET YOUR GOAL HERE
+        std::vector<double> current_goal = {1.403416, 1.063706, -0.069165, -1.139720, 0.424151};
+
+        printf("Current Goal: ");
         for (int j = 0; j < NU; j++) {
-            printf("%.6f ", q_out[j]);
+            printf("%.6f ", current_goal[j]);
         }
         printf("\n");
 
-        // Format the IK result into a JSON command string
-        // Using default values: hand = 0.0, spd = 0, acc = 10, T = 102
-        command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+        // Format into a JSON command string
+        command_len = snprintf(json_command_buffer, JSON_COMMAND_BUFFER_SIZE,
                                "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
-                               q_out[0], q_out[1], q_out[2], q_out[3], q_out[4],
+                               current_goal[0], current_goal[1], current_goal[2], current_goal[3], current_goal[4],
                                3.13, // Default hand/gripper value
-                               0,      // Default speed
-                               10);    // Default acceleration
+                               1,      // Default speed
+                               1);    // Default acceleration
 
         if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
             printf("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
@@ -444,7 +430,7 @@ int main() {
         }
 
         // Send the command
-        status = sendCommandAndParseResponse(ik_command_buffer);
+        status = sendCommandAndParseResponse(json_command_buffer);
         if (status != 0) {
             printf("Command for pose %d failed with status code: %d\n", i + 1, status);
             overall_success = false;
@@ -453,15 +439,13 @@ int main() {
              break;    // Stop the sequence on communication error
         } else {
              printf("Command for pose %d processed successfully.\n", i + 1);
-             // Update current_q with the newly calculated angles for the *next* iteration's guess
-             memcpy(current_q, q_out, sizeof(q_out));
         }
 
         // Optional delay between sending commands for each pose
         //printf("Waiting 3 seconds before next pose...\n");
         //sleep_ms(3000);
         printf("Waiting for joint target to be reached...\n");
-        waitForJointTargetReached(q_out);
+        waitForJointTargetReached(current_goal.data());
     } // End of pose loop
 
     // --- Cleanup ---
