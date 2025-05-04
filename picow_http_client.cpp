@@ -20,9 +20,12 @@
 #define URL_BUFFER_SIZE 512
 #define JSON_COMMAND_BUFFER_SIZE 256
 #define URL_BASE_PATH "/js?json="
-#define JOINT_TARGET_EPSILON 0.01
+#define JOINT_TARGET_EPSILON 0.1
 #define JOINT_POLL_TIMEOUT_MS 3000
-#define JOINT_POLLING_INTERVAL_MS 30
+#define JOINT_POLLING_INTERVAL_MS 300
+
+double curr_goal[NU+1];
+double curr_hand_pos = 2.5; // Current hand position
 
 // Global or appropriately scoped response buffer
 char response_buffer[RESPONSE_BUFFER_SIZE];
@@ -124,7 +127,7 @@ int sendCommandAndParseResponse(const char* json_command) {
          printf("Warning: HTTP request successful, but received no data.\n");
          return -4;
     }
-    //printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
+    printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
     if (parse_json_response_sscanf(response_buffer, &parsed_data) == 0) {
         //printf("Parsing successful!\n");
         // Print parsed data (optional, can be verbose in a loop)
@@ -145,78 +148,111 @@ typedef struct {
     double rotation[3][3];
 } TargetPose;
 
+#define OPEN_HAND TargetPose{ {900.0, 900.0, 900.0}, {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, -1.0}} }
+#define CLOSE_HAND TargetPose{ {1000.0, 1000.0, 1000.0}, {{1.0, 0.0, 0.0}, {0.0, 1.0, 0.0}, {0.0, 0.0, -1.0}} }
+
+bool is_open_hand(const TargetPose& pose) {
+    return pose.position[0] == OPEN_HAND.position[0] &&
+           pose.position[1] == OPEN_HAND.position[1] &&
+           pose.position[2] == OPEN_HAND.position[2];
+}
+
+bool is_close_hand(const TargetPose& pose) {
+    return pose.position[0] == CLOSE_HAND.position[0] &&
+           pose.position[1] == CLOSE_HAND.position[1] &&
+           pose.position[2] == CLOSE_HAND.position[2];
+}
+
+TargetPose create_pose_from_xyz_yaw(double x, double y, double z, double yaw_rad) {
+    TargetPose pose;
+
+    // 1. Set the position vector directly
+    pose.position[0] = x;
+    pose.position[1] = y;
+    pose.position[2] = z;
+
+    // 2. Calculate the rotation matrix for Z-axis rotation (Yaw)
+    double cos_yaw = cos(yaw_rad);
+    double sin_yaw = sin(yaw_rad);
+
+    // Rotation matrix for rotation around Z by yaw_rad:
+    // [ cos(yaw) -sin(yaw)  0 ]
+    // [ sin(yaw)  cos(yaw)  0 ]
+    // [    0         0      1 ]
+    pose.rotation[0][0] = cos_yaw;
+    pose.rotation[0][1] = -sin_yaw;
+    pose.rotation[0][2] = 0.0;
+
+    pose.rotation[1][0] = sin_yaw;
+    pose.rotation[1][1] = cos_yaw;
+    pose.rotation[1][2] = 0.0;
+
+    pose.rotation[2][0] = 0.0;
+    pose.rotation[2][1] = 0.0;
+    pose.rotation[2][2] = -1.0;
+
+    return pose;
+}
+
 // --- Define the sequence of target poses ---
 // Add as many poses as you need here
 TargetPose target_poses[] = {
     // Pose 1 (Example from your original code)
-    {
-        {-0.253370, 0.307280, 0.384357}, // Position {x, y, z}
-        { // Rotation Matrix
-            {-0.807539, -0.043014, -0.588243},
-            {-0.587219, 0.152085, 0.795012},
-            {0.055267, 0.987431, -0.148073}
-        }
-    },
-    // Pose 2 (Example from your original code)
-    {
-        {-0.063227, 0.093742, 0.384357}, // Position {x, y, z}
-        { // Rotation Matrix
-            {-0.832132, -0.552419, 0.048882},
-            {-0.041797, 0.150363, 0.987747},
-            {-0.553000, 0.819893, -0.148211}
-        }
-    },
-    {
-        {0.099508, 0.358437, 0.253702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, 0.961865, -0.080833}, 
-            {0.021623, 0.077889, -0.996728} 
-        }
-    },
-    {
-        {0.099508, 0.258437, 0.253702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    // -y axis is towards the wall
-    {
-        {0.099508, 0.208437, 0.253702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    // +x is towards the window + slightly opposite side of the wall
-    {
-        {0.159508, 0.208437, 0.253702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    // -z axis is towards the floow + slightly to the wall
-    {
-        {0.159508, 0.208437, 0.153702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    {
-        {0.309508, 0.208437, 0.153702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    }
+    //{
+    //    {0.099508, 0.258437, 0.253702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //},
+    //{
+    //    {0.099508, 0.258437, 0.203702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //},
+    OPEN_HAND,
+    create_pose_from_xyz_yaw(0.099508, 0.208437, 0.253702, 0.0),
+    create_pose_from_xyz_yaw(0.159508, 0.208437, 0.153702, 0.0),
+    CLOSE_HAND,
+    //// -y axis is towards the wall
+    //{
+    //    {0.099508, 0.208437, 0.253702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //},
+    //// +x is towards the window + slightly opposite side of the wall
+    //{
+    //    {0.159508, 0.208437, 0.253702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //},
+    //// -z axis is towards the floor + slightly to the wall
+    //{
+    //    {0.159508, 0.208437, 0.153702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //},
+    //{
+    //    {0.309508, 0.208437, 0.153702},
+    //    {
+    //        {0.965013, -0.262201, -0.000446}, 
+    //        {0.261309, -0.961865, -0.080833}, 
+    //        {0.021623, 0.077889,-0.996728} 
+    //    }
+    //}
     // Add more poses here...
 };
 
@@ -255,7 +291,7 @@ int waitForJointTargetReached(const double target_q[NU]) {
     command_len = snprintf(command_buffer, JSON_COMMAND_BUFFER_SIZE,
                            "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
                            target_q[0], target_q[1], target_q[2], target_q[3], target_q[4],
-                           3.13, // Default hand value from previous code - adjust if needed
+                           curr_hand_pos, // Default hand value from previous code - adjust if needed
                            0,    // Default speed
                            2);  // Default acceleration
 
@@ -303,7 +339,7 @@ int waitForJointTargetReached(const double target_q[NU]) {
         for (int j = 0; j < NU; ++j) {
             double diff = fabs(reported_q[j] - target_q[j]);
             if (diff > JOINT_TARGET_EPSILON) {
-                //printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
+                printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
                 all_reached = false;
                 break; // No need to check further joints for this poll cycle
             }
@@ -376,36 +412,65 @@ int main() {
     for (int i = 0; i < num_poses; ++i) {
         printf("\n--- Processing Pose %d of %d ---\n", i + 1, num_poses);
 
-        // Calculate Inverse Kinematics for the current target pose
-        // Use 'current_q' (result from previous step or initial start) as the starting guess
-        inverse_kinematics_roarm(
-            target_poses[i].position,
-            target_poses[i].rotation,
-            guess_q,
-            q_out      // Store the result here
-        );
+        if(is_open_hand(target_poses[i])) {
+            printf("Pose %d is OPEN_HAND.\n", i + 1);
+            // send {"T": 106, "cmd": 2.6, "spd": 2, "acc": 2}
+            command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+                                "{\"T\":106,\"cmd\":%.4f,\"spd\":%d,\"acc\":%d}",
+                                2.9,  // Default hand value
+                                2,    // Default speed
+                                2);  // Default acceleration
+        } else if(is_close_hand(target_poses[i])) {
+            //// send {"T": 107, "tor": 100}
+            //command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+            //                    "{\"T\":107,\"tor\":%d}",
+            //                    100); // Default torque value
+            //command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+            //                    "{\"T\":106,\"cmd\":%.4f,\"spd\":%d,\"acc\":%d}",
+            //                    0.98,  // Default hand value
+            //                    2,    // Default speed
+            //                    2);  // Default acceleration
+            // above commands is not working for some reason
+            // let's try {"T": 121, "joint": 5, "angle": 0.2, "spd": 2, "acc": 2}
+            command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+                                "{\"T\":121,\"joint\":%d,\"angle\":%.4f,\"spd\":%d,\"acc\":%d}",
+                                6,    // Joint number for hand
+                                0.9,  // Hand position
+                                2,    // Default speed
+                                2);  // Default acceleration
+            printf("Pose %d is CLOSE_HAND.\n", i + 1);
+        } else {       
+            // Calculate Inverse Kinematics for the current target pose
+            // Use 'current_q' (result from previous step or initial start) as the starting guess
+            inverse_kinematics_roarm(
+                target_poses[i].position,
+                target_poses[i].rotation,
+                guess_q,
+                q_out      // Store the result here
+            );
 
-        printf("IK Output (q_out): ");
-        for (int j = 0; j < NU; j++) {
-            printf("%.6f ", q_out[j]);
-        }
-        printf("\n");
+            printf("IK Output (q_out): ");
+            for (int j = 0; j < NU; j++) {
+                printf("%.6f ", q_out[j]);
+            }
+            printf("\n");
 
-        // Format the IK result into a JSON command string
-        // Using default values: hand = 0.0, spd = 0, acc = 10, T = 102
-        command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
-                               "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
-                               q_out[0], q_out[1], q_out[2], q_out[3], q_out[4],
-                               3.13, // Default hand/gripper value
-                               0,      // Default speed
-                               2);    // Default acceleration
+            // Format the IK result into a JSON command string
+            // Using default values: hand = 0.0, spd = 0, acc = 10, T = 102
+            command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+                                "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"spd\":%d,\"acc\":%d}",
+                                q_out[0], q_out[1], q_out[2], q_out[3], q_out[4],
+                                //curr_hand_pos, // Default hand/gripper value
+                                0,      // Default speed
+                                2);    // Default acceleration
 
-        if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
-            printf("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
-            overall_success = false;
-            // Decide whether to continue or break
-            // continue; // Skip sending this command
-             break;    // Stop the sequence on formatting error
+            if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
+                printf("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
+                overall_success = false;
+                // Decide whether to continue or break
+                // continue; // Skip sending this command
+                break;    // Stop the sequence on formatting error
+            }
         }
 
         // Send the command
@@ -425,13 +490,21 @@ int main() {
         // Optional delay between sending commands for each pose
         //printf("Waiting 3 seconds before next pose...\n");
         //sleep_ms(3000);
-        printf("Waiting for joint target to be reached to ...\n");
-        // print q_out
-        for (int j = 0; j < NU; j++) {
-            printf("%.6f ", q_out[j]);
+        if(is_open_hand(target_poses[i])) {
+            printf("Waiting for hand to open...\n");
+            sleep_ms(1000);
+        } else if(is_close_hand(target_poses[i])) {
+            printf("Waiting for hand to close...\n");
+            sleep_ms(4000);
+        } else {
+            printf("Waiting for joint target to be reached to ...\n");
+            // print q_out
+            for (int j = 0; j < NU; j++) {
+                printf("%.6f ", q_out[j]);
+            }
+            printf("\n");
+            waitForJointTargetReached(q_out);
         }
-        printf("\n");
-        waitForJointTargetReached(q_out);
     } // End of pose loop
 
     // --- Cleanup ---
