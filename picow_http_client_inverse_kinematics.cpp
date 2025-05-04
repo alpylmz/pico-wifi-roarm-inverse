@@ -101,7 +101,7 @@ int sendCommandAndParseResponse(const char* json_command) {
                required_len, URL_BUFFER_SIZE);
         return -2;
     }
-    printf("Sending command JSON: %s\n", json_command);
+    //printf("Sending command JSON: %s\n", json_command);
     response_buffer[0] = '\0';
     response_buffer_len = 0;
     EXAMPLE_HTTP_REQUEST_T req = {0};
@@ -113,9 +113,9 @@ int sendCommandAndParseResponse(const char* json_command) {
         printf("Error: Failed to get async context.\n");
         return -3;
     }
-    printf("Performing HTTP GET request to %s%s\n", req.hostname, req.url);
+    //printf("Performing HTTP GET request to %s%s\n", req.hostname, req.url);
     int result = http_client_request_sync(context, &req);
-    printf("HTTP request finished. Result code: %d\n", result);
+    //printf("HTTP request finished. Result code: %d\n", result);
     if (result != 0) {
         printf("HTTP request failed with lwip error code: %d.\n", result);
         return result;
@@ -124,9 +124,9 @@ int sendCommandAndParseResponse(const char* json_command) {
          printf("Warning: HTTP request successful, but received no data.\n");
          return -4;
     }
-    printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
+    //printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
     if (parse_json_response_sscanf(response_buffer, &parsed_data) == 0) {
-        printf("Parsing successful!\n");
+        //printf("Parsing successful!\n");
         // Print parsed data (optional, can be verbose in a loop)
         // printf("  T=%d, x=%.3f, y=%.3f, z=%.3f, b=%.3f, s=%.3f, e=%.3f, t=%.3f, r=%.3f, g=%.3f\n",
         //        parsed_data.T, parsed_data.x, parsed_data.y, parsed_data.z,
@@ -288,17 +288,14 @@ int waitForJointTargetReached(const double target_q[NU]) {
                            "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
                            target_q[0], target_q[1], target_q[2], target_q[3], target_q[4],
                            3.13, // Default hand value from previous code - adjust if needed
-                           0,    // Default speed
-                           10);  // Default acceleration
+                           1,    // Default speed
+                           1);  // Default acceleration
 
     if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
         printf("ERROR [waitForJointTargetReached]: Failed to format joint command.\n");
         return -3; // Formatting error
     }
-
-    printf("INFO [waitForJointTargetReached]: Waiting for joints: Target=[%.3f, %.3f, %.3f, %.3f, %.3f] (Eps=%.3f rad)\n",
-           target_q[0], target_q[1], target_q[2], target_q[3], target_q[4], JOINT_TARGET_EPSILON);
-
+    
     // 2. Start Polling Loop with Timeout
     absolute_time_t timeout_time = make_timeout_time_ms(JOINT_POLL_TIMEOUT_MS);
     int poll_count = 0;
@@ -338,7 +335,7 @@ int waitForJointTargetReached(const double target_q[NU]) {
         for (int j = 0; j < NU; ++j) {
             double diff = fabs(reported_q[j] - target_q[j]);
             if (diff > JOINT_TARGET_EPSILON) {
-                // printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
+                printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
                 all_reached = false;
                 break; // No need to check further joints for this poll cycle
             }
@@ -432,11 +429,11 @@ int main() {
                                "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
                                q_out[0], q_out[1], q_out[2], q_out[3], q_out[4],
                                3.13, // Default hand/gripper value
-                               0,      // Default speed
-                               10);    // Default acceleration
+                               1,      // Default speed
+                               1);    // Default acceleration
 
         if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
-            printf("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
+            printfƒ("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
             overall_success = false;
             // Decide whether to continue or break
             // continue; // Skip sending this command
@@ -460,7 +457,12 @@ int main() {
         // Optional delay between sending commands for each pose
         //printf("Waiting 3 seconds before next pose...\n");
         //sleep_ms(3000);
-        printf("Waiting for joint target to be reached...\n");
+        printf("Waiting for joint target to be reached to ...\n");
+        // print q_out
+        for (int j = 0; j < NU; j++) {
+            printf("%.6f ", q_out[j]);
+        }
+        printf("\n");
         waitForJointTargetReached(q_out);
     } // End of pose loop
 

@@ -14,9 +14,6 @@
 
 #include "inverse_kinematics/inverse_kinematics.hpp" // Make sure NU is defined here (e.g., #define NU 5)
 
-#include <vector>
-
-
 // --- Constants and Globals (Keep existing ones like HOST, buffers, etc.) ---
 #define HOST "192.168.4.1"
 #define RESPONSE_BUFFER_SIZE 2048
@@ -104,7 +101,7 @@ int sendCommandAndParseResponse(const char* json_command) {
                required_len, URL_BUFFER_SIZE);
         return -2;
     }
-    printf("Sending command JSON: %s\n", json_command);
+    //printf("Sending command JSON: %s\n", json_command);
     response_buffer[0] = '\0';
     response_buffer_len = 0;
     EXAMPLE_HTTP_REQUEST_T req = {0};
@@ -116,9 +113,9 @@ int sendCommandAndParseResponse(const char* json_command) {
         printf("Error: Failed to get async context.\n");
         return -3;
     }
-    printf("Performing HTTP GET request to %s%s\n", req.hostname, req.url);
+    //printf("Performing HTTP GET request to %s%s\n", req.hostname, req.url);
     int result = http_client_request_sync(context, &req);
-    printf("HTTP request finished. Result code: %d\n", result);
+    //printf("HTTP request finished. Result code: %d\n", result);
     if (result != 0) {
         printf("HTTP request failed with lwip error code: %d.\n", result);
         return result;
@@ -127,9 +124,9 @@ int sendCommandAndParseResponse(const char* json_command) {
          printf("Warning: HTTP request successful, but received no data.\n");
          return -4;
     }
-    printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
+    //printf("Raw Response Received (%d bytes):\n---\n%s\n---\n", response_buffer_len, response_buffer);
     if (parse_json_response_sscanf(response_buffer, &parsed_data) == 0) {
-        printf("Parsing successful!\n");
+        //printf("Parsing successful!\n");
         // Print parsed data (optional, can be verbose in a loop)
         // printf("  T=%d, x=%.3f, y=%.3f, z=%.3f, b=%.3f, s=%.3f, e=%.3f, t=%.3f, r=%.3f, g=%.3f\n",
         //        parsed_data.T, parsed_data.x, parsed_data.y, parsed_data.z,
@@ -219,39 +216,7 @@ TargetPose target_poses[] = {
             {0.261309, -0.961865, -0.080833}, 
             {0.021623, 0.077889,-0.996728} 
         }
-    },
-    {
-        {0.309508, 0.158437, 0.083702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    {
-        {0.309508, 0.108437, 0.083702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    {
-        {0.309508, 0.008437, 0.083702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
-    {
-        {0.309508, 0.008437, -0.083702},
-        {
-            {0.965013, -0.262201, -0.000446}, 
-            {0.261309, -0.961865, -0.080833}, 
-            {0.021623, 0.077889,-0.996728} 
-        }
-    },
+    }
     // Add more poses here...
 };
 
@@ -292,16 +257,13 @@ int waitForJointTargetReached(const double target_q[NU]) {
                            target_q[0], target_q[1], target_q[2], target_q[3], target_q[4],
                            3.13, // Default hand value from previous code - adjust if needed
                            0,    // Default speed
-                           10);  // Default acceleration
+                           2);  // Default acceleration
 
     if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
         printf("ERROR [waitForJointTargetReached]: Failed to format joint command.\n");
         return -3; // Formatting error
     }
-
-    printf("INFO [waitForJointTargetReached]: Waiting for joints: Target=[%.3f, %.3f, %.3f, %.3f, %.3f] (Eps=%.3f rad)\n",
-           target_q[0], target_q[1], target_q[2], target_q[3], target_q[4], JOINT_TARGET_EPSILON);
-
+    
     // 2. Start Polling Loop with Timeout
     absolute_time_t timeout_time = make_timeout_time_ms(JOINT_POLL_TIMEOUT_MS);
     int poll_count = 0;
@@ -341,7 +303,7 @@ int waitForJointTargetReached(const double target_q[NU]) {
         for (int j = 0; j < NU; ++j) {
             double diff = fabs(reported_q[j] - target_q[j]);
             if (diff > JOINT_TARGET_EPSILON) {
-                // printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
+                //printf("DEBUG [waitForJointTargetReached]: Joint %d delta %.4f > Eps %.4f\n", j, diff, JOINT_TARGET_EPSILON); // Verbose
                 all_reached = false;
                 break; // No need to check further joints for this poll cycle
             }
@@ -379,9 +341,22 @@ int main() {
     int num_poses = sizeof(target_poses) / sizeof(target_poses[0]);
     printf("Defined %d target poses.\n", num_poses);
 
+    // --- IK and Command Variables ---
+    // Initial guess for the very first IK calculation (e.g., home position)
+    // Ensure NU is defined correctly (likely 5 for base, shoulder, elbow, wrist, roll)
+    double initial_q_start[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
+    double guess_q[NU] = {1.506867, -1.0104, -0.214423, -1.1439, 0.0055117};
+    // double initial_q_start[NU] = {0.0, -M_PI_2, M_PI_2, -M_PI_2, 0.0}; // Example alternative start
+
+    double current_q[NU] = {0}; // Holds the current/last known joint angles
+    double q_out[NU] = {0};     // Holds the result of the latest IK calculation
+    char ik_command_buffer[JSON_COMMAND_BUFFER_SIZE]; // Buffer for the command string
     int command_len;
     int status = 0;
     bool overall_success = true;
+
+    // Initialize current_q with the starting configuration
+    memcpy(current_q, initial_q_start, sizeof(initial_q_start));
 
     // --- WiFi Connection ---
     if (cyw43_arch_init()) {
@@ -401,25 +376,29 @@ int main() {
     for (int i = 0; i < num_poses; ++i) {
         printf("\n--- Processing Pose %d of %d ---\n", i + 1, num_poses);
 
-        // json_command_buffer
-        char json_command_buffer[JSON_COMMAND_BUFFER_SIZE]; // Buffer for the command string
+        // Calculate Inverse Kinematics for the current target pose
+        // Use 'current_q' (result from previous step or initial start) as the starting guess
+        inverse_kinematics_roarm(
+            target_poses[i].position,
+            target_poses[i].rotation,
+            guess_q,
+            q_out      // Store the result here
+        );
 
-        // SET YOUR GOAL HERE
-        std::vector<double> current_goal = {1.403416, 1.063706, -0.069165, -1.139720, 0.424151};
-
-        printf("Current Goal: ");
+        printf("IK Output (q_out): ");
         for (int j = 0; j < NU; j++) {
-            printf("%.6f ", current_goal[j]);
+            printf("%.6f ", q_out[j]);
         }
         printf("\n");
 
-        // Format into a JSON command string
-        command_len = snprintf(json_command_buffer, JSON_COMMAND_BUFFER_SIZE,
+        // Format the IK result into a JSON command string
+        // Using default values: hand = 0.0, spd = 0, acc = 10, T = 102
+        command_len = snprintf(ik_command_buffer, JSON_COMMAND_BUFFER_SIZE,
                                "{\"T\":102,\"base\":%.6f,\"shoulder\":%.6f,\"elbow\":%.6f,\"wrist\":%.6f,\"roll\":%.6f,\"hand\":%.4f,\"spd\":%d,\"acc\":%d}",
-                               current_goal[0], current_goal[1], current_goal[2], current_goal[3], current_goal[4],
+                               q_out[0], q_out[1], q_out[2], q_out[3], q_out[4],
                                3.13, // Default hand/gripper value
-                               1,      // Default speed
-                               1);    // Default acceleration
+                               0,      // Default speed
+                               2);    // Default acceleration
 
         if (command_len < 0 || command_len >= JSON_COMMAND_BUFFER_SIZE) {
             printf("Error: Failed to format IK command for pose %d or buffer too small.\n", i + 1);
@@ -430,7 +409,7 @@ int main() {
         }
 
         // Send the command
-        status = sendCommandAndParseResponse(json_command_buffer);
+        status = sendCommandAndParseResponse(ik_command_buffer);
         if (status != 0) {
             printf("Command for pose %d failed with status code: %d\n", i + 1, status);
             overall_success = false;
@@ -439,13 +418,20 @@ int main() {
              break;    // Stop the sequence on communication error
         } else {
              printf("Command for pose %d processed successfully.\n", i + 1);
+             // Update current_q with the newly calculated angles for the *next* iteration's guess
+             memcpy(current_q, q_out, sizeof(q_out));
         }
 
         // Optional delay between sending commands for each pose
         //printf("Waiting 3 seconds before next pose...\n");
         //sleep_ms(3000);
-        printf("Waiting for joint target to be reached...\n");
-        waitForJointTargetReached(current_goal.data());
+        printf("Waiting for joint target to be reached to ...\n");
+        // print q_out
+        for (int j = 0; j < NU; j++) {
+            printf("%.6f ", q_out[j]);
+        }
+        printf("\n");
+        waitForJointTargetReached(q_out);
     } // End of pose loop
 
     // --- Cleanup ---
